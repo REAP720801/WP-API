@@ -41,11 +41,11 @@ class WP_JSON_Posts {
 			// Comments
 			'/posts/(?P<id>\d+)/comments'                  => array(
 				array( array( $this, 'get_comments' ), WP_JSON_Server::READABLE ),
-				array( '__return_null', WP_JSON_Server::CREATABLE | WP_JSON_Server::ACCEPT_JSON ),
+				array( array( $this, 'new_comment' ), WP_JSON_Server::CREATABLE | WP_JSON_Server::ACCEPT_JSON ),
 			),
 			'/posts/(?P<id>\d+)/comments/(?P<comment>\d+)' => array(
 				array( array( $this, 'get_comment' ), WP_JSON_Server::READABLE ),
-				array( '__return_null', WP_JSON_Server::EDITABLE | WP_JSON_Server::ACCEPT_JSON ),
+				array( array( $this, 'edit_comment' ), WP_JSON_Server::EDITABLE | WP_JSON_Server::ACCEPT_JSON ),
 				array( '__return_null', WP_JSON_Server::DELETABLE ),
 			),
 
@@ -190,6 +190,29 @@ class WP_JSON_Posts {
 	}
 
 	/**
+	 * Create a new comment.
+	 *
+	 * Comment will be attached to $id. $data is the data for the new comment.
+	 *
+	 * @param int $id Post ID
+	 * @param array $data
+	 * @return int|mixed|void|WP_Error|WP_JSON_ResponseInterface
+	 */
+	public function new_comment( $id, $data ) {
+		unset( $data['ID'] );
+
+		$result = $this->insert_comment( $id, $data );
+		if ( $result instanceof WP_Error ) {
+			return $result;
+		}
+
+		$response = json_ensure_response( $this->get_comment( $result ) );
+		$response->set_status( 201 );
+		$response->header( 'Location', json_url( '/comments/' . $result ) );
+		return $response;
+	}
+
+	/**
 	 * Create a new post for any registered post type.
 	 *
 	 * @since 3.4.0
@@ -320,6 +343,43 @@ class WP_JSON_Posts {
 		}
 
 		return $this->get_post( $id );
+	}
+
+	/**
+	 * Edit a comment.
+	 *
+	 * The $data parameter only needs to contain fields that should be changed.
+	 * All other fields will retain their existing values.
+	 *
+	 * @param $id Post ID
+	 * @param $comment Comment ID
+	 * @param $data Comment data array
+	 * @param array $_headers Header data
+	 * @return array|int|mixed|void|WP_Error
+	 */
+	public function edit_comment( $id, $comment, $data, $_headers = array() ) {
+		$id = (int) $id;
+		$comment = (int) $comment;
+
+		if ( empty( $id ) )
+			return new WP_Error( 'json_post_invalid_id', __( 'Invalid post ID.' ), array( 'status' => 404 ) );
+
+		if ( empty( $comment ) )
+			return new WP_Error( 'json_comment_invalid_id', __( 'Invalid comment ID.' ), array( 'status' => 404 ) );
+
+		$comment = get_comment( $comment, ARRAY_A );
+
+		if ( empty( $comment['comment_ID'] ) )
+			return new WP_Error( 'json_comment_invalid_id', __( 'Invalid comment ID.' ), array( 'status' => 404 ) );
+
+		$data['ID'] = $comment['comment_ID'];
+
+		$retval = $this->insert_comment( $comment, $data );
+		if ( is_wp_error( $retval ) ) {
+			return $retval;
+		}
+
+		return $this->get_comment( $comment );
 	}
 
 	/**
@@ -674,6 +734,111 @@ class WP_JSON_Posts {
 			$author['last_name'] = $user->last_name;
 		}
 		return $author;
+	}
+
+	/**
+	 * Update/insert comment.
+	 *
+	 * If $data comments a key ID, then it will update the comment with that ID.
+	 *
+	 * @param int $post_id Post ID for comment
+	 * @param array $data Comment data
+	 * @return int|mixed|void|WP_Error
+	 */
+	protected function insert_comment( $post_id, $data ) {
+		$comment = array(
+			'comment_post_ID' => $post_id,
+		);
+
+		$update = ! empty( $data['ID'] );
+
+		if ( $update ) {
+			$current_comment = get_comment( absint( $data['ID'] ) );
+			if ( ! $current_comment )
+				return new WP_Error( 'json_comment_invalid_id', __( 'Invalid comment ID.' ), array( 'status' => 400 ) );
+			$comment['comment_ID'] = absint( $data['ID'] );
+		}
+
+		// Permissions check
+		if ( ! current_user_can( 'edit_comment' ) )
+			return new WP_Error( 'json_cannot_create', __( 'Sorry, you are not allowed to edit comments on this site.' ), array( 'status' => 400 ) );
+
+
+		// Comment date
+		if ( ! empty( $data['date'] ) ) {
+			list( $comment['comment_date'], $comment['comment_date_gmt'] ) = $this->server->get_date_with_gmt( $data['date'] );
+		} elseif ( ! empty( $data['date_gmt'] ) ) {
+			list( $comment['comment_date'], $comment['comment_date_gmt'] ) = $this->server->get_date_with_gmt( $data['date_gmt'], true );
+		}
+
+		// Comment content
+		if ( isset( $data['content'] ) ) {
+			$comment['comment_content'] = $data['content'];
+		}
+
+		// User id - since the user must have edit_comment caps to do this, we might as well let them
+		// assign whatever user to this comment that they want.
+		if ( isset( $data['user_id'] ) ) {
+			$comment['user_id'] = $data['user_id'];
+		}
+
+		// Comment karma
+		if ( isset( $data['karma'] ) ) {
+			$comment['comment_karma'] = (int) $data['karma'];
+		}
+
+		// Comment agent - this can't be updated
+		if ( ! empty( $data['agent'] ) ) {
+			$comment['comment_agent'] = $data['agent'];
+		}
+
+		// Comment approved
+		if ( isset( $data['approved'] ) ) {
+			$comment['comment_approved'] = (int) $data['approved'];
+		}
+
+		// Comment author stuff. The IP can't be updated once it's set.
+		if ( isset( $data['author'] ) ) {
+			$comment['comment_author'] = $data['author'];
+		} if ( isset( $data['author_email'] ) ) {
+			$comment['comment_author_email'] = $data['author_email'];
+		} if ( isset( $data['author_IP'] ) ) {
+			$comment['comment_author_IP'] = $data['author_IP'];
+		} if ( isset( $data['author_url'] ) ) {
+			$comment['comment_author_url'] = $data['author_url'];
+		}
+
+		// Parent
+		if ( isset( $data['parent'] ) ) {
+			$comment['comment_parent'] = (int) $data['parent'];
+		} elseif ( ! $update ) {
+			$comment['comment_parent'] = 0;
+		}
+
+		// Type
+		if ( isset( $data['type'] ) ) {
+			$comment['comment_type'] = $data['type'];
+		}
+
+		// Pre-insert hook
+		$can_insert = apply_filters( 'json_pre_insert_comment', true, $comment, $data, $update );
+		if ( is_wp_error( $can_insert ) ) {
+			return $can_insert;
+		}
+
+		$comment_ID = $update ? wp_update_comment( $comment, true ) : wp_insert_comment( $comment, true );
+
+		// Comment meta
+		// TODO: implement this
+
+		if ( is_wp_error( $comment_ID ) ) {
+			return $comment_ID;
+		}
+
+		do_action( 'json_insert_comment', $comment, $data, $update );
+
+		return $comment_ID;
+
 	}
 
 	/**
