@@ -70,6 +70,9 @@ class WP_JSON_Posts {
 			'/posts/statuses' => array(
 				array( $this, 'get_post_statuses' ),     WP_JSON_Server::READABLE
 			),
+			'/posts/statuses/(?P<status>\w+)' => array(
+				array( $this, 'get_post_status' ),       WP_JSON_Server::READABLE
+			),
 		);
 		return array_merge( $routes, $post_routes );
 	}
@@ -650,6 +653,42 @@ class WP_JSON_Posts {
 		}
 
 		return apply_filters( 'json_post_statuses', $data, $statuses );
+	}
+
+	/**
+	 * Retrieve a single post status
+	 *
+	 * @param string $status Post status slug
+	 * @return array Post Status entity
+	 */
+	public function get_post_status( $status ) {
+		$status = get_post_status_object( $status );
+
+		if ( empty( $status ) ) {
+			return new WP_Error( 'json_post_status_invalid_slug', __( 'Invalid post status slug.' ), array( 'status' => 404 ) );
+		}
+
+		if ( $status->internal === true || ! $status->show_in_admin_status_list ) {
+			return new WP_Error( 'json_post_status_cannot_view', __( 'You cannot view this post status.' ), array( 'status' => 403 ) );
+		}
+
+		$data = array(
+			'name'         => $status->label,
+			'slug'         => $status->name,
+			'public'       => $status->public,
+			'protected'    => $status->protected,
+			'private'      => $status->private,
+			'queryable'    => $status->publicly_queryable,
+			'show_in_list' => $status->show_in_admin_all_list,
+			'meta'         => array(
+				'links' => array(
+					'self' => json_url( 'posts/statuses/' . $status->name ),
+					'up'   => json_url( 'posts/statuses' ),
+				)
+			),
+		);
+
+		return $data;
 	}
 
 	/**
