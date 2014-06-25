@@ -631,25 +631,7 @@ class WP_JSON_Posts {
 				continue;
 			}
 
-			$data[ $status->name ] = array(
-				'name'         => $status->label,
-				'slug'         => $status->name,
-				'public'       => $status->public,
-				'protected'    => $status->protected,
-				'private'      => $status->private,
-				'queryable'    => $status->publicly_queryable,
-				'show_in_list' => $status->show_in_admin_all_list,
-				'meta'         => array(
-					'links' => array()
-				),
-			);
-			if ( $status->publicly_queryable ) {
-				if ( $status->name === 'publish' ) {
-					$data[ $status->name ]['meta']['links']['archives'] = json_url( '/posts' );
-				} else {
-					$data[ $status->name ]['meta']['links']['archives'] = json_url( add_query_arg( 'status', $status->name, '/posts' ) );
-				}
-			}
+			$data[$status->name] = $this->get_post_status( $status->name );
 		}
 
 		return apply_filters( 'json_post_statuses', $data, $statuses );
