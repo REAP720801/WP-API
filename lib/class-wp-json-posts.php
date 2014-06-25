@@ -631,7 +631,12 @@ class WP_JSON_Posts {
 				continue;
 			}
 
-			$data[$status->name] = $this->get_post_status( $status->name );
+			$status_array = $this->get_post_status( $status->name );
+			if ( is_wp_error( $status_array ) ) {
+				continue;
+			}
+
+			$data[$status->name] = $status_array;
 		}
 
 		return apply_filters( 'json_post_statuses', $data, $statuses );
